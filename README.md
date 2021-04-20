@@ -14,5 +14,9 @@ _No es necesario configurar ningun puerto en el router, no obstante, se utilizan
 
 El programa dispone de presets de configuracion para los usuarios de infv_tv, no obstante la configuración se puede modificar a mano en el archivo config.cfg, que se genera la primera vez que se ejecuta el programa_
 
+## Autores ✒️
+
+* **Manuel Bazarra Lorenzo** - *Desarrollo completo del software y lógica de programa* 
+
 ## Version 1.1 Alpha
 _Se añade sincronización con servidor NTP para correjir posibles desfases entre relojes de los clientes._
