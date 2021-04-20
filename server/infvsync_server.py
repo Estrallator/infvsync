@@ -142,13 +142,13 @@ while True:
         
 
         #most_laggy_specific_second = round(stream_t[most_laggy_index][-2],COMPENSATION_PRECISION) #Que segundo obtuvimos del video de mas lag
-        most_laggy_specific_second = stream_t[most_laggy_index][-2]#Que segundo obtuvimos del video de mas lag
+        most_laggy_specific_second = round(stream_t[most_laggy_index][-2], COMPENSATION_PRECISION)#Que segundo obtuvimos del video de mas lag
         
         print(stream)
-        for stream in stream_t: #debido a udp necesitamos ordenar
+        for stream in stream_t: #debido a udp necesitamos ordenar, por el momento sólo ordenaremos los datos de timestamp
             stream=stream.sort()
         print(stream)
-        print("most_laggy")
+        print("most_laggy")  #A efectos de debug
         print(most_laggy_specific_second)
         i = 0 # este indice representa el stream con el que trabajamos (0-7)
         for stream in stream_t:# por cada stream ver en que indice está el segundo más atrasado
@@ -159,12 +159,15 @@ while True:
                     print(t,end='')
                     print("  ")
                     print(most_laggy_specific_second)
-
+                    break
+                if(compensation_index[i] ==len(compensation_index))
+                    print("**debug** Alcanzado limite del array para el stream con índice: ", end='')
+                    print(i)
                     break
                 compensation_index[i] += 1
             i += 1
 
-        print("\ncompensation")     
+        print("\ncompensation: ")     
         print(compensation_index)
         
 
