@@ -135,7 +135,9 @@ def send_stream_without_compensation():
         print("tamaño de databuffer: ",end='')
         print(len(stream),end=' timebuffer:')
         print(len(stream_t[i]))
-
+        print("ultimo timestamp-", end='index:')
+        print(i, end=' time: ')
+        print(stream_t[i])
         if len(stream) > 1:
             if i <= 3:
                 out_socket.sendto(stream[0],('127.0.0.1',UDP_GAME[i]-100))
@@ -158,7 +160,6 @@ setup()
 while True:
     rx_process()
     elapsed_seconds=time.time()-init_seconds #Segundos transcurridos de programa con precision decimal
-    
     if elapsed_seconds > COMPENSATION_INTERVAL: # realizamos el proceso de compensacion 
         init_seconds=time.time()
         calculate_compensation()
