@@ -16,41 +16,10 @@ import struct
 import select
 from os import system,name
 
-#funcion para limpiar consola, cuidado:
-#creo bloquea el programa unos ms,porque espera a que el comando finalice y puede provocar perdida de paquetes
-#ver si se puede evitar
-def clear(): 
-    if name=='nt':
-        _=system('cls')
-    else:
-        _=system('clear')
-
-def same(relay,received_data_type):#received_data_type d (data) o tipo t (time) relay 1 data 0 time
-    if relay == 0:
-        if received_data_type == 't':
-            return True
-        else:
-            return False
-    else:
-        if received_data_type == 'd':
-            return True
-        else:
-            return False
-    
-
-def getIndex(s,inputs):
-    i = 0 # reseteamos indice, representa el nº de socket por orden de lista
-    for in_s in inputs: #identificamos que socket es
-        if s is in_s:
-            break
-        i += 1
-    return i
-
-
 COMPENSATION_INTERVAL = 2  #Cada cuantos segundos se realiza la compensacion de video
-COMPENSATION_PRECISION = 3  # cuantos decimales de precision se usan en la compensacion (segundosme dijist)
+COMPENSATION_PRECISION = 1  # cuantos decimales de precision se usan en la compensacion (segundosme dijist)
 
-LOCAL_IN_IP = "192.168.0.11" #Ip a la que se estan reciviendo todos los streams
+LOCAL_IN_IP = "192.168.1.122" #Ip a la que se estan reciviendo todos los streams
 UDP_GAME = [6660,6661,6662,6663] # Puertos usados para recibir imagen del juego
 UDP_CAM = [6670,6671,6672,6673] #Idem para camaras
 relay = [] #Lo usaremos para saber si el anterior paquete fue timestamp o data
@@ -63,155 +32,136 @@ outputs = []
 game_socket = [] #Lista de sockets
 cam_socket = []
 init_seconds = time.time() #momento inicial del programa, puede que sea util para calculos
+init_seconds2 = time.time()
 
 
-i = 0 #Indice
-for gp in UDP_GAME:  #Reservamos los puertos de entrada (juego)
-    game_socket.append(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
-    game_socket[i].bind((LOCAL_IN_IP, gp))
-    game_socket[i].setblocking(False)   #establecemos un socket que no bloquee, para no perder paquetes de otros
-    i += 1
-i = 0  #Reseteamos el indice
-for cp in UDP_CAM: #Reservamos los puertos de entrada (camaras)
-    cam_socket.append(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
-    cam_socket[i].bind((LOCAL_IN_IP, cp))
-    cam_socket[i].setblocking(False)
-    i += 1
+#funcion para limpiar consola, cuidado:
+#creo bloquea el programa unos ms,porque espera a que el comando finalice y puede provocar perdida de paquetes
+#ver si se puede evitar
+def clear(): 
+    if name=='nt':
+        _=system('cls')
+    else:
+        _=system('clear')
 
-#socket de salida, ni hace falta reservarlo, ni es necesario crear uno por puerto
-out_socket=socket.socket(socket.AF_INET,socket.SOCK_DGRAM) 
-unpacker=struct.Struct('18s') #Desempaqueta un string de 18 bytes de la candena udp, contiene el timestamp 
+def same(relay,received_data_type): #nos indica si el anterior paquete fue del mismo tipo
+    if relay == 't':
+        if received_data_type == 't':
+            return True
+        else:
+            return False
+    else:
+        if received_data_type == 'd':
+            return True
+        else:
+            return False
+    
 
-for gs in game_socket:#añadimos los sockets adecuados a la lista de inputs
-    inputs.append(gs)
-for cs in cam_socket:
-    inputs.append(cs)
+def getIndex(s,inputs):
+    index = 0 # reseteamos indice, representa el nº de socket por orden de lista
+    for in_socket in inputs: #identificamos que socket es
+        if s is in_socket:
+            break
+        index += 1
+    return index
 
-#inicializamos las dimensiones de las listas, para no provocar errores
-relay = ['d']*len(inputs) # ponemos los reles en d, obligará a que el primer paquete siempre sea data
-databuffer = []
-stream_t = []
-i=0;
-for n in inputs:
-    databuffer.append([b''])
-    stream_t.append([-1.0]) 
-    compensation_index.append(1) #iniciamos sin compensacion en ningun video
-    stream_lag.append(-1.0) # -1 nos indica que todavia no hay lag disponible
-    i += 1 
+def setup(): #inicialización de las listas y sockets necesarios
+    global unpacker
+    global relay
+    global out_socket
 
+    index = 0 #Indice
+    for gp in UDP_GAME:  #Reservamos los puertos de entrada (juego)
+        game_socket.append(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+        game_socket[index].bind((LOCAL_IN_IP, gp))
+        game_socket[index].setblocking(False)   #establecemos un socket que no bloquee, para no perder paquetes de otros
+        index += 1
+    index = 0  #Reseteamos el indice
+    for cp in UDP_CAM: #Reservamos los puertos de entrada (camaras)
+        cam_socket.append(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+        cam_socket[index].bind((LOCAL_IN_IP, cp))
+        cam_socket[index].setblocking(False)
+        index += 1
+    out_socket=socket.socket(socket.AF_INET,socket.SOCK_DGRAM) 
+    unpacker=struct.Struct('18s') #Desempaqueta un string de 18 bytes de la candena udp, contiene el timestamp 
 
-#bucle de programa
-#se usa select para poder comprobar cuándo hay datos disponibles en un socket sin que se bloquee la ejecucion
-#asi evitamos perder paquetes en la medida de lo posible
-while True:
+    for gs in game_socket:#añadimos los sockets adecuados a la lista de inputs
+        inputs.append(gs)
+    for cs in cam_socket:
+        inputs.append(cs)
+    #inicializamos las dimensiones de las listas, para no provocar errores
+    relay = ['d']*len(inputs) # ponemos los reles en d, obligará a que el primer paquete siempre sea data
+    index=0
+    for n in inputs:
+        databuffer.append([b''])
+        stream_t.append([-1.0]) 
+        compensation_index.append(-1) #iniciamos sin compensacion en ningun video
+        stream_lag.append(-1.0) # -1 nos indica que todavia no hay lag disponible
+        index += 1 
+
+def rx_process(): #proceso de recepcion y clasificación de los paquetes
+    global relay
+    index = 0
     readable,writable,exceptional= select.select(inputs,outputs,inputs)
     for s in readable: #iteramos entre todos los socket de entrada que esten listos
         data, addr=s.recvfrom(1316) #recojemos dato
-        i= getIndex(s,inputs) #indice del socket actual
+        index= getIndex(s,inputs) #indice del socket actual
         if len(data) == unpacker.size:  #si el tamaño del paquete es 18bytes, es un timestamp
-            if(same(relay[i],'t')): #si el paquete anterior no fue un data, ignoramos timestamp
+            if(same(relay[index],'t')): #si el paquete anterior no fue un data, ignoramos timestamp
                 continue
-            relay[i] = 't'
+            relay[index] = 't'
             timestamp=unpacker.unpack(data) #desempaqueta byte
             timestamp=timestamp[0].decode("utf-8") #decodifica
             timestamp=timestamp.replace('\x00','0') #cuando el ultimo caracter es un 0 aparece esta cadena. Tenemos que quitarla
             timestamp=float(timestamp)  #convertimos a float
-            stream_lag[i]= time.time()-timestamp
-            stream_t[i][-1] = timestamp #insertamos el tiempo en la ultima posicion de la lista
+            stream_lag[index]= time.time()-timestamp
+            stream_t[index][-1] = timestamp #insertamos el tiempo en la ultima posicion de la lista
         else:
-            databuffer[i].append(data) #almacenamos paquete en buffer
-            if(same(relay[i],'d')): #si el paquete anterior fue data, rellenamos con "sin timestamp"
-                stream_t[i].append(0)
+            databuffer[index].append(data) #almacenamos paquete en buffer
+            if(same(relay[index],'d')): #si el paquete anterior fue data, rellenamos con "sin timestamp"
+                index += 1
+                stream_t[index].append(0.0)
                 continue
-            relay[i] = 'd'
-            #out_sock.sendto(data,(UDP_IP, UDP_OUT))
+            relay[index] = 'd'
 
-        #en este punto deberiamos tener una lista ordenada de buffers y lags, cuya primera dimension en ambos,
-        #coincide con el indice de socket y su segunda dimension es el nº de paquete recibido.
-        #Dicho de otra manera, tenemos una lista de datos con su correspondiente timestamp en el mismo nº de indice.
-    
+def calculate_compensation():
+    for stream in stream_t: #debido a udp necesitamos ordenar, por el momento sólo ordenaremos los datos de timestamp
+        if stream[-1] != 0.0:
+            stream.sort()
 
-    elapsed_seconds=time.time()-init_seconds #Segundos transcurridos de programa con precision decimal
-
-    if( elapsed_seconds > COMPENSATION_INTERVAL):
-        init_seconds=time.time()
-        print("lag values:")
-        print(stream_lag)
-        #Obtenemos en que punto del buffer tenemos que trabajar para que haya sync de videos
-        most_laggy_index = stream_lag.index(max(stream_lag)) #averiguamos que stream es el de mayor lag
-        
-
-        #most_laggy_specific_second = round(stream_t[most_laggy_index][-2],COMPENSATION_PRECISION) #Que segundo obtuvimos del video de mas lag
-        most_laggy_specific_second = round(stream_t[most_laggy_index][-2], COMPENSATION_PRECISION)#Que segundo obtuvimos del video de mas lag
-        
-        print(stream)
-        for stream in stream_t: #debido a udp necesitamos ordenar, por el momento sólo ordenaremos los datos de timestamp
-            stream=stream.sort()
-        print(stream)
-        print("most_laggy")  #A efectos de debug
-        print(most_laggy_specific_second)
-        i = 0 # este indice representa el stream con el que trabajamos (0-7)
-        for stream in stream_t:# por cada stream ver en que indice está el segundo más atrasado
-            for t in stream:
-                if t < 0:
-                    continue
-                if t <= most_laggy_specific_second:
-                    print(t,end='')
-                    print("  ")
-                    print(most_laggy_specific_second)
-                    break
-                if(compensation_index[i] ==len(compensation_index))
-                    print("**debug** Alcanzado limite del array para el stream con índice: ", end='')
-                    print(i)
-                    break
-                compensation_index[i] += 1
-            i += 1
-
-        print("\ncompensation: ")     
-        print(compensation_index)
-        
-
-  
-    #realizamos envio de datos
+def send_stream_without_compensation():
     i = 0
     for stream in databuffer:
-        if len(stream) > 500:
+        print("tamaño de databuffer: ",end='')
+        print(len(stream),end=' timebuffer:')
+        print(len(stream_t[i]))
+
+        if len(stream) > 1:
             if i <= 3:
-                out_socket.sendto(stream[compensation_index[i-1]],('127.0.0.1',UDP_GAME[i]-100))
+                out_socket.sendto(stream[0],('127.0.0.1',UDP_GAME[i]-100))
                 stream.pop(0)
+                if len(stream)< len(stream_t[i]):
+                    stream_t[i].pop(0)
             else:
-                out_socket.sendto(stream[compensation_index[i-1]],('127.0.0.1',UDP_CAM[i-4]-100))
+                out_socket.sendto(stream[0],('127.0.0.1',UDP_CAM[i-4]-100))
                 stream.pop(0)
+                if len(stream)< len(stream_t[i]):
+                    stream_t[i].pop(0)
         i += 1
 
-    #************************************************
-    #{k: v for k, v in sorted(number_list.items(), key=lambda item: item[1], reverse=True)} #ordenar lista
 
 
+
+#*****************************INICIO DEL PROGRAMA*********************************
+
+setup()
+while True:
+    rx_process()
+    elapsed_seconds=time.time()-init_seconds #Segundos transcurridos de programa con precision decimal
     
-
-    #Version antigua, no vale para nada, solo referencia
-    #if len(buffer0)>1 and len(buffer1)>1:
-    #    print("ENTRO")
-    #    if delay >= delay2:
-    #        if elapsed_seconds > delay:
-    #            out_sock.sendto(buffer0[0],(UDP_IP, UDP_OUT))
-    #            buffer0.pop(0)
-    #        out_sock.sendto(buffer1[0],(UDP_IP, UDP_OUT2))
-    #        buffer1.pop(0)
-    #    else:
-    #        if elapsed_seconds > delay2:
-    #            out_sock.sendto(buffer1[0],(UDP_IP, UDP_OUT2))
-    #            buffer1.pop(0)
-    #        out_sock.sendto(buffer0[0],(UDP_IP, UDP_OUT))
-    #        buffer0.pop(0)
-
-
-
-    #print("delay1:", end='')
-    #print(delay)
-    #print("delay2:", end='')
-    #print(delay2)
-    
-   
+    if elapsed_seconds > COMPENSATION_INTERVAL: # realizamos el proceso de compensacion 
+        init_seconds=time.time()
+        calculate_compensation()
+        
+    send_stream_without_compensation() #Envio sin compensacion de lag(para debug o pruebas)
 
