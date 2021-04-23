@@ -19,7 +19,7 @@ from os import system,name
 version = "Server 1.5 ALPHA"
 
 COMPENSATION_INTERVAL = 2  #Cada cuantos segundos se realiza la compensacion de video
-COMPENSATION_PRECISION = 1  # cuantos decimales de precision se usan en la compensacion (segundosme dijist)
+COMPENSATION_PRECISION = 2  # cuantos decimales de precision se usan en la compensacion (segundosme dijist)
 
 LOCAL_IN_IP = "192.168.1.122" #Ip a la que se estan reciviendo todos los streams
 UDP_GAME = [6660,6661,6662,6663] # Puertos usados para recibir imagen del juego
