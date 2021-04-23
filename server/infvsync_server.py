@@ -16,6 +16,8 @@ import struct
 import select
 from os import system,name
 
+version = "Server 1.5 ALPHA"
+
 COMPENSATION_INTERVAL = 2  #Cada cuantos segundos se realiza la compensacion de video
 COMPENSATION_PRECISION = 1  # cuantos decimales de precision se usan en la compensacion (segundosme dijist)
 
@@ -23,16 +25,17 @@ LOCAL_IN_IP = "192.168.1.122" #Ip a la que se estan reciviendo todos los streams
 UDP_GAME = [6660,6661,6662,6663] # Puertos usados para recibir imagen del juego
 UDP_CAM = [6670,6671,6672,6673] #Idem para camaras
 relay = [] #Lo usaremos para saber si el anterior paquete fue timestamp o data
-stream_t = [] #almacenamos el momento exacto en el que se ha recibido un paquete
+timebuffer = [] #almacenamos el momento exacto en el que se ha recibido un paquete
 stream_lag = [] #almacenamos el lag de cada uno de los streams recibidos
 compensation_index = [] #Lo usaremos para aplicar la compensacion
 databuffer = [] #buffer donde almacenamos los datos del stream, lo que nos permite sincronizarlos
+buffer_min_size=[] #Tamaño minimo que debe tener el buffer (autocalculado)
 inputs = [] #lista de sockets de entrada (hace falta para el select)
 outputs = []
 game_socket = [] #Lista de sockets
 cam_socket = []
-init_seconds = time.time() #momento inicial del programa, puede que sea util para calculos
-init_seconds2 = time.time()
+compensation_timer = time.time() 
+buffering_timer = time.time()
 
 
 #funcion para limpiar consola, cuidado:
@@ -94,18 +97,19 @@ def setup(): #inicialización de las listas y sockets necesarios
     index=0
     for n in inputs:
         databuffer.append([b''])
-        stream_t.append([-1.0]) 
+        timebuffer.append([-1.0]) 
         compensation_index.append(-1) #iniciamos sin compensacion en ningun video
         stream_lag.append(-1.0) # -1 nos indica que todavia no hay lag disponible
+        buffer_min_size.append(0)
         index += 1 
 
 def rx_process(): #proceso de recepcion y clasificación de los paquetes
-    global relay
+  
     index = 0
     readable,writable,exceptional= select.select(inputs,outputs,inputs)
     for s in readable: #iteramos entre todos los socket de entrada que esten listos
         data, addr=s.recvfrom(1316) #recojemos dato
-        index= getIndex(s,inputs) #indice del socket actual
+        index= getIndex(s,inputs) #indice del socket actual      
         if len(data) == unpacker.size:  #si el tamaño del paquete es 18bytes, es un timestamp
             if(same(relay[index],'t')): #si el paquete anterior no fue un data, ignoramos timestamp
                 continue
@@ -115,41 +119,140 @@ def rx_process(): #proceso de recepcion y clasificación de los paquetes
             timestamp=timestamp.replace('\x00','0') #cuando el ultimo caracter es un 0 aparece esta cadena. Tenemos que quitarla
             timestamp=float(timestamp)  #convertimos a float
             stream_lag[index]= time.time()-timestamp
-            stream_t[index][-1] = timestamp #insertamos el tiempo en la ultima posicion de la lista
+            if timebuffer[index][0] == -1.0:
+                timebuffer[index][0]=timestamp
+
+            if timebuffer[index][-1] == 0.0:
+                timebuffer[index][-1] = timestamp #insertamos el tiempo en la ultima posicion de la lista
+            else:
+                timebuffer[index].append(timestamp) #insertamos el tiempo en la ultima posicion de la lista
         else:
             databuffer[index].append(data) #almacenamos paquete en buffer
             if(same(relay[index],'d')): #si el paquete anterior fue data, rellenamos con "sin timestamp"
-                index += 1
-                stream_t[index].append(0.0)
+                timebuffer[index].append(0.0)
                 continue
             relay[index] = 'd'
 
-def calculate_compensation():
-    for stream in stream_t: #debido a udp necesitamos ordenar, por el momento sólo ordenaremos los datos de timestamp
+
+
+########################################################################################################################################
+#                                                       CALCULO DE LA COMPENSACION                                                     #
+# Primero debemos tener unos segundos de grabacion almacenados en el buffer                                                            #
+# De los streams activos, localizamos el que EMPIECE por un timestamp más alto. Con este dato, comparamos en el resto de streams       #
+# en que índice del buffer se encuetra este mismo tiempo, lo que nos dará un offset a partir del cual debemos emitir para compensar    #
+# los delays                                                                                                                           #
+########################################################################################################################################
+def calculate_compensation(): 
+    max_time = [0,0,0,0,0,0,0,0]
+    active_streams = []
+    
+    i = 0
+    for stream in timebuffer: #debido a udp necesitamos ordenar, por el momento sólo ordenaremos los datos de timestamp
         if stream[-1] != 0.0:
             stream.sort()
-
-def send_stream_without_compensation():
-    i = 0
-    for stream in databuffer:
-        print("tamaño de databuffer: ",end='')
-        print(len(stream),end=' timebuffer:')
-        print(len(stream_t[i]))
-        print("ultimo timestamp-", end='index:')
-        print(i, end=' time: ')
-        print(stream_t[i])
-        if len(stream) > 1:
-            if i <= 3:
-                out_socket.sendto(stream[0],('127.0.0.1',UDP_GAME[i]-100))
-                stream.pop(0)
-                if len(stream)< len(stream_t[i]):
-                    stream_t[i].pop(0)
-            else:
-                out_socket.sendto(stream[0],('127.0.0.1',UDP_CAM[i-4]-100))
-                stream.pop(0)
-                if len(stream)< len(stream_t[i]):
-                    stream_t[i].pop(0)
+            if stream[0] != -1.0:  #sólo nos interesan streams que tengan timestamp asignados
+                max_time[i] = stream[0]
+                active_streams.append(i)            
         i += 1
+    reference_time = max(max_time)    #El valor más alto es eĺ que nos interesa
+    reference_time = round(reference_time, COMPENSATION_PRECISION) #Trabajamos con la precision decimal configurada 
+    
+    print("Listado de tiempos: ", end='')
+    print(max_time)
+    print('Tiempo seleccionado de referencia: ', end='')
+    print(reference_time)
+    print('Streams detectados como activos: ', end='')
+    print(active_streams)
+    print("Tamaño de los timebuffer: ")
+    for index in active_streams:
+        print("Stream index: ", end='')
+        print(index, end=' Tamaño: ')
+        print(len(timebuffer[index]))
+
+    #Calculamos el indice de compensación, pero sólo procesamos los stream que tengan timestamps
+    for index in active_streams:
+        compensation_index[index] = 0
+        for t in timebuffer[index]:
+            if t >= reference_time: 
+                print("localizado timestamp coincidente: ", end='')
+                print(t, end=' para stream con índice: ')
+                print(index)
+                break
+            if index == len(timebuffer[index])-1:
+                print("* Se ha llegado al final de la lista sin timestamp coincidente para el stream con indice: ", end='')
+                print(index)
+                break
+            compensation_index[index] += 1
+
+    print(compensation_index)
+
+
+
+def send_stream_without_compensation(buffer_time):
+
+    elapsed = time.time() - buffering_timer
+
+    if elapsed >= buffer_time:
+        i = 0
+        for stream in databuffer:
+            if len(stream) > 1:
+                #print("tamaño de databuffer: ",end='')
+                #print(len(stream),end=' timebuffer:')
+                #print(len(timebuffer[i]))
+                #print("ultimo timestamp-", end='index:')
+                #print(i, end=' time: ')
+                #print(timebuffer[i])
+                if len(stream) > buffer_min_size[i]:
+                    if i <= 3:
+                        out_socket.sendto(stream[0],('127.0.0.1',UDP_GAME[i]-100))
+                        stream.pop(0)
+                        if len(stream)< len(timebuffer[i]):
+                            timebuffer[i].pop(0)
+                    else:
+                        out_socket.sendto(stream[0],('127.0.0.1',UDP_CAM[i-4]-100))
+                        stream.pop(0)
+                        if len(stream)< len(timebuffer[i]):
+                            timebuffer[i].pop(0)
+            i += 1
+    else:
+        i = 0
+        for stream in databuffer:
+            if len(stream) > 1:
+                buffer_min_size[i] = len(stream)
+            i += 1
+
+def send_stream_with_compensation(buffer_time):
+
+    elapsed = time.time() - buffering_timer
+
+    if elapsed >= buffer_time:
+        i = 0
+        for stream in databuffer:
+            if len(stream) > 1:
+                #print("tamaño de databuffer: ",end='')
+                #print(len(stream),end=' timebuffer:')
+                #print(len(timebuffer[i]))
+                #print("ultimo timestamp-", end='index:')
+                #print(i, end=' time: ')
+                #print(timebuffer[i])
+                if len(stream) > buffer_min_size[i]:     #Sólo enviamos si hemos recibido previamente (si no lo hacemos, el buffer se vacia más rápido de lo que se llena)
+                    if i <= 3:
+                        out_socket.sendto(stream[compensation_index[i]],('127.0.0.1',UDP_GAME[i]-100))
+                        stream.pop(0)
+                        timebuffer[i].pop(0)
+                        
+                    else:
+                        out_socket.sendto(stream[compensation_index[i]],('127.0.0.1',UDP_CAM[i-4]-100))
+                        stream.pop(0)
+                        timebuffer[i].pop(0)
+            i += 1
+    else:
+        i = 0
+        for stream in databuffer:
+            if len(stream) > buffer_min_size[i]:
+                buffer_min_size[i] = len(stream)
+            i += 1
+
 
 
 
@@ -159,10 +262,9 @@ def send_stream_without_compensation():
 setup()
 while True:
     rx_process()
-    elapsed_seconds=time.time()-init_seconds #Segundos transcurridos de programa con precision decimal
+    elapsed_seconds=time.time()-compensation_timer  #Segundos transcurridos de programa con precision decimal
     if elapsed_seconds > COMPENSATION_INTERVAL: # realizamos el proceso de compensacion 
-        init_seconds=time.time()
-        calculate_compensation()
-        
-    send_stream_without_compensation() #Envio sin compensacion de lag(para debug o pruebas)
-
+        compensation_timer=time.time()
+        calculate_compensation()   
+    #send_stream_without_compensation(10.0) #Envio sin compensacion de lag(para debug o pruebas) con un tiempo de almacenado en buffer
+    send_stream_with_compensation(10.0)
