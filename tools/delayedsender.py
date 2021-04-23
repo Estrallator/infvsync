@@ -25,7 +25,7 @@ buffer_time = []
 DELAY_TIME = 5.0
 
 version="DelayedSend release 1.0"
-
+ 
 
 def clear():
     # windows
