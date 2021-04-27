@@ -27,7 +27,7 @@ if len(sys.argv)>1:
 
   
 
-version="sender 1.1 BETA"
+version="sender 2.0a"
 
 clear()
 print("""\n$$$$$$\\ $$\\   $$\\ $$$$$$$$\\ $$\\    $$\\     
@@ -87,13 +87,20 @@ if os.path.isfile("config.cfg"):   #Si existe el archivo de configuracion proced
       out_sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM) #socket de salida
       print("\nComenzando retransmisión. No cierres esta ventana.\n Cerrar este programa causa el corte del stream ")
       print("\nGG have fun!")
+
+      separator= b'\\xts'
       while True:  #bucle de envio de datos
           data, addr=sock.recvfrom(pkt_size)  #recibimos 1306 bytes
-          out_sock.sendto(data,(UDP_OUT_IP, UDP_OUT_PORT))   #enviamos una cadena
+
           btime = time.time() + offset
           btime = str(btime)
           packer= struct.Struct('18s')
-          out_sock.sendto(packer.pack(btime.encode("utf-8")),(UDP_OUT_IP, UDP_OUT_PORT))# enviamos timestamp
+          packed_time= packer.pack(btime.encode("utf-8"))
+
+          data2 =  packed_time + separator + data
+
+          out_sock.sendto(data2,(UDP_OUT_IP, UDP_OUT_PORT))
+
           
 else:
     print("No se ha encontrado archivo de configuracion")
