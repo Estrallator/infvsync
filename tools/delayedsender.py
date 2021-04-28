@@ -107,5 +107,5 @@ while True:  #bucle de envio de datos
      buffer_time.pop(0)
           
 
-
+ 
 
