@@ -12,7 +12,7 @@ import configparser
 import ntplib
 import threading
 
-version="LAUNCHER 1.0 BETA"
+version="LAUNCHER 2.0 BETA"
 author="Manuel BL- alias Estrallator"
 option=0
 preset=0
@@ -167,27 +167,34 @@ def parse_config():   # Parseamos el archivo de config y asignamos la variables 
     else:
         print("ERROR, la configuracion tiene un formato incorrecto o faltan parámetros. Borra config.cfg y genera uno nuevo.")
         input("Finaliza este programa antes de continuar...")
-def game_stream_process(offset):
+def game_stream_process(offset,lock):
 
     game_sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM) #socket de entrada
     game_sock.bind((UDP_IN_IP, UDP_GAME_IN_PORT))
     game_out_sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM) #socket de salida
     separator= b'\\xts'
     while True:  #bucle de envio de datos
-      game_data, addr=game_sock.recvfrom(PKT_SIZE)  #recibimos 1306 bytes
+
+      game_data, addr=game_sock.recvfrom(PKT_SIZE)  #recibimos 1316 bytes
       game_time = time.time() + offset
       game_time = str(game_time)
       packer= struct.Struct('18s')
       packed_time= packer.pack(game_time.encode("utf-8"))
       cooked_game_data =  packed_time + separator + game_data
       game_out_sock.sendto(cooked_game_data,(UDP_OUT_IP, UDP_GAME_OUT_PORT))
+      #game_out_sock.sendto(game_data,(UDP_OUT_IP, UDP_GAME_OUT_PORT))
 
-def cam_stream_process(offset):
+      #print("sent: ", end='')
+      #print(len(cooked_game_data), end=' bytes\n')
+  
+
+def cam_stream_process(offset, lock):
     cam_sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM) #socket de entrada
     cam_sock.bind((UDP_IN_IP, UDP_CAM_IN_PORT))
     cam_out_sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM) #socket de salida
     separator= b'\\xts'
     while True:  #bucle de envio de datos
+
       cam_data, addr=cam_sock.recvfrom(PKT_SIZE)  #recibimos 1316 bytes
       cam_time = time.time() + offset
       cam_time = str(cam_time)
@@ -195,6 +202,7 @@ def cam_stream_process(offset):
       packed_time= packer.pack(cam_time.encode("utf-8"))
       cooked_cam_data =  packed_time + separator + cam_data
       cam_out_sock.sendto(cooked_cam_data,(UDP_OUT_IP, UDP_CAM_OUT_PORT))
+
 
 
 
@@ -217,8 +225,11 @@ if os.path.isfile("config.cfg"):   #Si existe el archivo de configuracion proced
     print("Sincronizado correctamente con 'europe.pool.ntp.org'")
     begin=input("\n\npresiona [enter] para comenzar la transmision...")
     print("----->EMITIENDO<-------")
-    game_thread=threading.Thread(target=game_stream_process,args=(offset,) , daemon=True)
-    cam_thread=threading.Thread(target=cam_stream_process,args=(offset,) , daemon=True)
+
+    lock = threading.Lock()
+    game_thread=threading.Thread(target=game_stream_process,args=(offset,lock, ) , daemon=True)
+    cam_thread=threading.Thread(target=cam_stream_process,args=(offset,lock, ) , daemon=True)
+    
 
     game_thread.start()
     cam_thread.start()
