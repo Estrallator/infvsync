@@ -17,7 +17,7 @@ import select
 from os import system,name
 import threading
 
-version = "Server 2.0 ALPHA"
+version = "Server 2.1 ALPHA"
 
 COMPENSATION_INTERVAL = 20  #Cada cuantos segundos se realiza la compensacion de video
 COMPENSATION_PRECISION = 2  # cuantos decimales de precision se usan en la compensacion (segundosme dijist)
@@ -61,6 +61,7 @@ def getIndex(s,inputs):
 def setup(): #inicialización de las listas y sockets necesarios
     global unpacker
     global out_socket
+    global inputs   
 
     index = 0 #Indice
     for gp in UDP_GAME:  #Reservamos los puertos de entrada (juego)
@@ -96,19 +97,19 @@ def rx_process(lock): #proceso de recepcion y clasificación de los paquetes
     global timebuffer
     global databuffer
     global inputs
-    global outputs
 
     while True:
+
         index = 0
         readable,writable,exceptional= select.select(inputs,outputs,inputs)
         for s in readable: #iteramos entre todos los socket de entrada que esten listos
-            time.sleep(0.00001)
-            data, addr=s.recvfrom(1338) #recojemos dato
-            index= getIndex(s,inputs) #indice del socket actual     
+            lock.acquire()
+            data, addr=s.recvfrom(1340) #recojemos dato
+            index= getIndex(s,inputs) #indice del socket actual  
             #ATENCION del paquete recibido,[0:22] contiene timestamp+separador
             #el resto  [22:] es datos
             databuffer[index].append(data)
-        time.sleep(0.00001)
+            lock.release()
             
 
 
@@ -167,6 +168,9 @@ def calculate_compensation():
 
 
 def send_stream_without_compensation(buffer_time):
+    global out_socket
+    global databuffer
+
     elapsed = time.time() - buffering_timer
     if elapsed >= buffer_time:
         i = 0
@@ -178,20 +182,14 @@ def send_stream_without_compensation(buffer_time):
                 #print("ultimo timestamp-", end='index:')
                 #print(i, end=' time: ')
                 #print(timebuffer[i])
-                if len(stream) > buffer_min_size[i]:
-                    if i <= 3:
-                        out_socket.sendto(stream[0][22:],('127.0.0.1',UDP_GAME[i]-100))
-                        stream.pop(0)
-                    else:
-                        out_socket.sendto(stream[0][22:],('127.0.0.1',UDP_CAM[i-4]-100))
-                        stream.pop(0)
+                if i <= 3:
+                    out_socket.sendto(stream[0][22:],('127.0.0.1',UDP_GAME[i]-100))
+                    stream.pop(0)
+                else:
+                    out_socket.sendto(stream[0],('127.0.0.1',UDP_CAM[i-4]-100))
+                    stream.pop(0)
             i += 1
-    else:
-        i = 0
-        for stream in databuffer:
-            if len(stream) > 1:
-                buffer_min_size[i] = len(stream)
-            i += 1
+    
 
 
 def send_stream_with_compensation(buffer_time):
@@ -214,8 +212,7 @@ def send_stream_with_compensation(buffer_time):
                             print(n)
                             out_socket.sendto(stream[0],('127.0.0.1',UDP_GAME[i]-100))
                             stream.pop(0)
-                            timebuffer[i].pop(0)
-                        
+                            timebuffer[i].pop(0)  
                     else:
                         for n in range(compensation_index[i]):
                             out_socket.sendto(stream[compensation_index[i]],('127.0.0.1',UDP_CAM[i-4]-100))
@@ -236,12 +233,12 @@ setup()
 lock = threading.Lock()
 rx_thread = threading.Thread(target=rx_process,args=(lock,), daemon=True)
 rx_thread.start()
-
+print("emitiendo")
 while True:
-    time.sleep(0.00001)
     elapsed_seconds=time.time()-compensation_timer  #Segundos transcurridos de programa con precision decimal
     #if elapsed_seconds > COMPENSATION_INTERVAL: # realizamos el proceso de compensacion 
     #    compensation_timer=time.time()
     #    calculate_compensation()
-    send_stream_without_compensation(10.0) #Envio sin compensacion de lag(para debug o pruebas) con un tiempo de almacenado en buffer
+    send_stream_without_compensation(0) #Envio sin compensacion de lag(para debug o pruebas) con un tiempo de almacenado en buffer
     #send_stream_with_compensation(10.0)
+    #time.sleep(1)
