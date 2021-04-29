@@ -17,11 +17,13 @@ import select
 from os import system,name
 import threading
 
-version = "Server 2.1 ALPHA"
+version = "Server 2.2 ALPHA"
 
 COMPENSATION_INTERVAL = 5  #Cada cuantos segundos se realiza la compensacion de video
 COMPENSATION_PRECISION = 2  # cuantos decimales de precision se usan en la compensacion (segundosme dijist)
 LOCAL_IN_IP = "192.168.0.11" #Ip a la que se estan reciviendo todos los streams
+BUFFERING_TIME= 0 #Segundos de carga del buffer (no se emite en este intervalo)
+
 UDP_GAME = [6660,6661,6662,6663] # Puertos usados para recibir imagen del juego
 UDP_CAM = [6670,6671,6672,6673] #Idem para camaras
 
@@ -29,6 +31,7 @@ UDP_CAM = [6670,6671,6672,6673] #Idem para camaras
 
 timebuffer = [] #almacenamos el momento exacto en el que se ha recibido un paquete
 stream_lag = [] #almacenamos el lag de cada uno de los streams recibidos
+rx_thread = [] #lista de hilos
 compensation_index = [] #Lo usaremos para aplicar la compensacion
 databuffer = [] #buffer donde almacenamos los datos del stream, lo que nos permite sincronizarlos
 buffer_min_size=[] #Tamaño minimo que debe tener el buffer (autocalculado)
@@ -62,18 +65,19 @@ def setup(): #inicialización de las listas y sockets necesarios
     global unpacker
     global out_socket
     global inputs   
+    global rx_thread
 
     index = 0 #Indice
     for gp in UDP_GAME:  #Reservamos los puertos de entrada (juego)
         game_socket.append(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
         game_socket[index].bind((LOCAL_IN_IP, gp))
-        game_socket[index].setblocking(False)   #establecemos un socket que no bloquee, para no perder paquetes de otros
+        #game_socket[index].setblocking(False)   #establecemos un socket que no bloquee, para no perder paquetes de otros
         index += 1
     index = 0  #Reseteamos el indice
     for cp in UDP_CAM: #Reservamos los puertos de entrada (camaras)
         cam_socket.append(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
         cam_socket[index].bind((LOCAL_IN_IP, cp))
-        cam_socket[index].setblocking(False)
+        #cam_socket[index].setblocking(False)
         index += 1
     out_socket=socket.socket(socket.AF_INET,socket.SOCK_DGRAM) 
     unpacker=struct.Struct('18s') #Desempaqueta un string de 18 bytes de la candena udp, contiene el timestamp 
@@ -85,6 +89,7 @@ def setup(): #inicialización de las listas y sockets necesarios
     #inicializamos las dimensiones de las listas, para no provocar errores
     index=0
     for n in inputs:
+        rx_thread.append(threading.Thread(target=rx_process,args=(n,), daemon=True))
         databuffer.append([b''])
         timebuffer.append([-1.0]) 
         compensation_index.append(-1) #iniciamos sin compensacion en ningun video
@@ -92,23 +97,21 @@ def setup(): #inicialización de las listas y sockets necesarios
         buffer_min_size.append(0)
         index += 1 
 
-def rx_process(lock): #proceso de recepcion y clasificación de los paquetes
+def rx_process(sk): #proceso de recepcion y clasificación de los paquetes
     
     global timebuffer
     global databuffer
     global inputs
+
     while True:
-        index = 0
-        readable,writable,exceptional= select.select(inputs,outputs,inputs)
-        for s in readable: #iteramos entre todos los socket de entrada que esten listos
-            
-            data, addr=s.recvfrom(1338) #recojemos dato
-            index= getIndex(s,inputs) #indice del socket actual
-            #print(index)
-            #print(len(data))
-            #ATENCION del paquete recibido,[0:22] contiene timestamp+separador
-            #el resto  [22:] es datos
-            #lock.acquire()
+        data, addr=sk.recvfrom(1338) #recojemos dato
+        index= getIndex(sk,inputs) #indice del socket actual
+        #print(index)
+        #print(len(data))
+        #ATENCION del paquete recibido,[0:22] contiene timestamp+separador
+        #el resto  [22:] es datos
+        #lock.acquire()
+        if len(data) > 1000:
             databuffer[index].append(data)
             #lock.release()
 
@@ -183,10 +186,9 @@ def send_stream_without_compensation(buffer_time, lock):
             i = 0
             for stream in databuffer:
                 if len(stream) > 1:
-
                     if i <= 3:
                         #lock.acquire()
-                        out_socket.sendto(stream[0],('127.0.0.1',UDP_GAME[i]-100))
+                        out_socket.sendto(stream[0][22:],('127.0.0.1',UDP_GAME[i]-100))
                         stream.pop(0)
                         #lock.release()
                     else:
@@ -199,47 +201,14 @@ def send_stream_without_compensation(buffer_time, lock):
     
 
 
-def send_stream_with_compensation(buffer_time):
-
-    elapsed = time.time() - buffering_timer
-    if elapsed >= buffer_time:
-        i = 0
-        for stream in databuffer:
-            if len(stream) > 1:
-                #print("tamaño de databuffer: ",end='')
-                #print(len(stream),end=' timebuffer:')
-                #print(len(timebuffer[i]))
-                #print("ultimo timestamp-", end='index:')
-                #print(i, end=' time: ')
-                #print(timebuffer[i])
-                if len(stream) > buffer_min_size[i]:     #Sólo enviamos si hemos recibido previamente (si no lo hacemos, el buffer se vacia más rápido de lo que se llena)
-                    n = 0
-                    if i <= 3:
-                        for n in range(compensation_index[i]):
-                            print(n)
-                            out_socket.sendto(stream[0],('127.0.0.1',UDP_GAME[i]-100))
-                            stream.pop(0)
-                            timebuffer[i].pop(0)  
-                    else:
-                        for n in range(compensation_index[i]):
-                            out_socket.sendto(stream[compensation_index[i]],('127.0.0.1',UDP_CAM[i-4]-100))
-                            stream.pop(0)
-                            timebuffer[i].pop(0)
-            i += 1
-    else:
-        i = 0
-        for stream in databuffer:
-            if len(stream) > buffer_min_size[i]:
-                buffer_min_size[i] = len(stream)
-            i += 1
-
 #*****************************INICIO DEL PROGRAMA*********************************
 
 setup()
 
 lock = threading.Lock()
-rx_thread = threading.Thread(target=rx_process,args=(lock,), daemon=True)
-rx_thread.start()
+
+for rxt in rx_thread:
+    rxt.start()
 
 tx_thread = threading.Thread(target=send_stream_without_compensation,args=(0,lock,), daemon=True)
 tx_thread.start()
